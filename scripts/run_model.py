@@ -30,6 +30,7 @@ parser.add_argument('--scene_graphs_json', default='scene_graphs/figure_6_sheep.
 parser.add_argument('--output_dir', default='outputs')
 parser.add_argument('--draw_scene_graphs', type=int, default=0)
 parser.add_argument('--device', default='gpu', choices=['cpu', 'gpu'])
+parser.add_argument('--model_type', default='none', required=True, type=str) # added for graph model type
 
 
 def main(args):
@@ -54,6 +55,7 @@ def main(args):
   # Load the model, with a bit of care in case there are no GPUs
   map_location = 'cpu' if device == torch.device('cpu') else None
   checkpoint = torch.load(args.checkpoint, map_location=map_location)
+  checkpoint['model_kwargs']['model_type'] = args.model_type
   model = Sg2ImModel(**checkpoint['model_kwargs'])
   model.load_state_dict(checkpoint['model_state'])
   model.eval()
@@ -85,4 +87,3 @@ def main(args):
 if __name__ == '__main__':
   args = parser.parse_args()
   main(args)
-

@@ -39,6 +39,9 @@ from sg2im.model import Sg2ImModel
 from sg2im.utils import int_tuple, float_tuple, str_tuple
 from sg2im.utils import timeit, bool_flag, LossManager
 
+### additions ###
+from tensorboardX import SummaryWriter
+
 torch.backends.cudnn.benchmark = True
 
 VG_DIR = os.path.expanduser('datasets/vg')
@@ -103,6 +106,8 @@ parser.add_argument('--normalization', default='batch')
 parser.add_argument('--activation', default='leakyrelu-0.2')
 parser.add_argument('--layout_noise_dim', default=32, type=int)
 parser.add_argument('--use_boxes_pred_after', default=-1, type=int)
+parser.add_argument('--model_type', default='none', required=True, type=str) # added for graph model type
+
 
 # Generator losses
 parser.add_argument('--mask_loss_weight', default=0, type=float)
@@ -122,7 +127,7 @@ parser.add_argument('--d_activation', default='leakyrelu-0.2')
 parser.add_argument('--d_obj_arch',
     default='C4-64-2,C4-128-2,C4-256-2')
 parser.add_argument('--crop_size', default=32, type=int)
-parser.add_argument('--d_obj_weight', default=1.0, type=float) # multiplied by d_loss_weight 
+parser.add_argument('--d_obj_weight', default=1.0, type=float) # multiplied by d_loss_weight
 parser.add_argument('--ac_loss_weight', default=0.1, type=float)
 
 # Image discriminator
@@ -133,11 +138,12 @@ parser.add_argument('--d_img_weight', default=1.0, type=float) # multiplied by d
 # Output options
 parser.add_argument('--print_every', default=10, type=int)
 parser.add_argument('--timing', default=False, type=bool_flag)
-parser.add_argument('--checkpoint_every', default=10000, type=int)
+parser.add_argument('--checkpoint_every', default=1000, type=int)
 parser.add_argument('--output_dir', default=os.getcwd())
 parser.add_argument('--checkpoint_name', default='checkpoint')
 parser.add_argument('--checkpoint_start_from', default=None)
-parser.add_argument('--restore_from_checkpoint', default=False, type=bool_flag)
+parser.add_argument('--restore_from_checkpoint', action='store_true')
+
 
 
 def add_loss(total_loss, curr_loss, loss_dict, loss_name, weight=1):
@@ -184,6 +190,7 @@ def build_model(args, vocab):
       'activation': args.activation,
       'mask_size': args.mask_size,
       'layout_noise_dim': args.layout_noise_dim,
+      'model_type': args.model_type, # added to switch between graph models
     }
     model = Sg2ImModel(**kwargs)
   return model, kwargs
@@ -281,7 +288,7 @@ def build_vg_dsets(args):
   dset_kwargs['h5_path'] = args.val_h5
   del dset_kwargs['max_samples']
   val_dset = VgSceneGraphDataset(**dset_kwargs)
-  
+
   return vocab, train_dset, val_dset
 
 
@@ -300,7 +307,7 @@ def build_loaders(args):
     'collate_fn': collate_fn,
   }
   train_loader = DataLoader(train_dset, **loader_kwargs)
-  
+
   loader_kwargs['shuffle'] = args.shuffle_val
   val_loader = DataLoader(val_dset, **loader_kwargs)
   return vocab, train_loader, val_loader
@@ -321,7 +328,7 @@ def check_model(args, t, loader, model):
         imgs, objs, boxes, triples, obj_to_img, triple_to_img = batch
       elif len(batch) == 7:
         imgs, objs, boxes, masks, triples, obj_to_img, triple_to_img = batch
-      predicates = triples[:, 1] 
+      predicates = triples[:, 1]
 
       # Run the model as it has been run during training
       model_masks = masks
@@ -371,7 +378,7 @@ def check_model(args, t, loader, model):
 
   batch_data = {
     'objs': objs.detach().cpu().clone(),
-    'boxes_gt': boxes.detach().cpu().clone(), 
+    'boxes_gt': boxes.detach().cpu().clone(),
     'masks_gt': masks_to_store,
     'triples': triples.detach().cpu().clone(),
     'obj_to_img': obj_to_img.detach().cpu().clone(),
@@ -413,6 +420,9 @@ def calculate_model_losses(args, skip_pixel_loss, model, img, img_pred,
 
 
 def main(args):
+  ### tensorboard setup ###
+  tb_save_dir = os.path.join(args.output_dir,'tensorboard')
+  tbx = SummaryWriter(tb_save_dir)
   print(args)
   check_args(args)
   float_dtype = torch.cuda.FloatTensor
@@ -480,14 +490,14 @@ def main(args):
       'losses': defaultdict(list),
       'd_losses': defaultdict(list),
       'checkpoint_ts': [],
-      'train_batch_data': [], 
+      'train_batch_data': [],
       'train_samples': [],
       'train_iou': [],
-      'val_batch_data': [], 
+      'val_batch_data': [],
       'val_samples': [],
       'val_losses': defaultdict(list),
-      'val_iou': [], 
-      'norm_d': [], 
+      'val_iou': [],
+      'norm_d': [],
       'norm_g': [],
       'counters': {
         't': None,
@@ -504,7 +514,7 @@ def main(args):
       break
     epoch += 1
     print('Starting epoch %d' % epoch)
-    
+
     for batch in train_loader:
       if t == args.eval_mode_after:
         print('switching to eval mode')
@@ -562,7 +572,7 @@ def main(args):
       ac_loss_real = None
       ac_loss_fake = None
       d_losses = {}
-      
+
       if obj_discriminator is not None:
         d_obj_losses = LossManager()
         imgs_fake = imgs_pred.detach()
@@ -586,7 +596,7 @@ def main(args):
 
         d_img_gan_loss = gan_d_loss(scores_real, scores_fake)
         d_img_losses.add_loss(d_img_gan_loss, 'd_img_gan_loss')
-        
+
         optimizer_d_img.zero_grad()
         d_img_losses.total_loss.backward()
         optimizer_d_img.step()
@@ -596,18 +606,21 @@ def main(args):
         for name, val in losses.items():
           print(' G [%s]: %.4f' % (name, val))
           checkpoint['losses'][name].append(val)
+          tbx.add_scalar('loss: {}'.format(name), val, t)
         checkpoint['losses_ts'].append(t)
 
         if obj_discriminator is not None:
           for name, val in d_obj_losses.items():
             print(' D_obj [%s]: %.4f' % (name, val))
             checkpoint['d_losses'][name].append(val)
+            tbx.add_scalar('d_obj_loss: {}'.format(name), val, t)
 
         if img_discriminator is not None:
           for name, val in d_img_losses.items():
             print(' D_img [%s]: %.4f' % (name, val))
             checkpoint['d_losses'][name].append(val)
-      
+            tbx.add_scalar('d_img_loss: {}'.format(name), val, t)
+
       if t % args.checkpoint_every == 0:
         print('checking on train')
         train_results = check_model(args, t, train_loader, model)
@@ -630,6 +643,7 @@ def main(args):
 
         for k, v in val_losses.items():
           checkpoint['val_losses'][k].append(v)
+          tbx.add_scalar('val_loss: {}'.format(k), v, t)
         checkpoint['model_state'] = model.state_dict()
 
         if obj_discriminator is not None:
@@ -664,4 +678,3 @@ def main(args):
 if __name__ == '__main__':
   args = parser.parse_args()
   main(args)
-
