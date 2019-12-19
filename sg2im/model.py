@@ -30,30 +30,6 @@ from sg2im.data.coco import CocoSceneGraphDataset, coco_collate_fn
 import os
 import json
 
-VG_DIR = os.path.expanduser('datasets/vg')
-COCO_DIR = os.path.expanduser('datasets/coco')
-
-def build_coco_dsets():
-    dset_kwargs = {
-        'image_dir': os.path.join(COCO_DIR, 'images/train2017'),
-        'instances_json': os.path.join(COCO_DIR, 'annotations/instances_train2017.json'),
-        'stuff_json': os.path.join(COCO_DIR, 'annotations/stuff_train2017.json'),
-        'stuff_only': True,
-        'image_size': '64,64',
-        'mask_size': 16,
-        'max_samples': None,
-        'min_object_size': 0.02,
-        'min_objects_per_image': 3,
-        'instance_whitelist': None,
-        'stuff_whitelist': None,
-        'include_other': False,
-        'include_relationships': True,
-    }
-    train_dset = CocoSceneGraphDataset(**dset_kwargs)
-    vocab = json.loads(json.dumps(train_dset.vocab))
-
-    return vocab
-
 class Sg2ImModel(nn.Module):
   def __init__(self, vocab, image_size=(64, 64), embedding_dim=64,
                gconv_dim=128, gconv_hidden_dim=512,
@@ -68,11 +44,7 @@ class Sg2ImModel(nn.Module):
     # vec_noise_dim, gconv_mode, box_anchor, decouple_obj_predictions
     if len(kwargs) > 0:
       print('WARNING: Model got unexpected kwargs ', kwargs)
-    """
-    #vocab = build_coco_dsets()
-    collate_fn = coco_collate_fn
-    print("vocab",vocab.keys())
-    """
+      
     self.vocab = vocab
     self.image_size = image_size
     self.layout_noise_dim = layout_noise_dim

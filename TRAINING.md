@@ -43,8 +43,10 @@ This will create the directory `datasets/coco` and will download about 21 GB of 
 Now you can train a new model by running the script:
 
 ```bash
-python scripts/train.py
+python scripts/train.py --model_type=baseline
 ```
+
+*Other options for model_type include 'baseline', random-walk-baseline', 'rnn-baseline', 'graphsage-maxpool', 'graphsage-lstm', 'graphsage-mean', 'gat-baseline'*
 
 By default this will train a model on COCO, periodically saving checkpoint files `checkpoint_with_model.pt` and `checkpoint_no_model.pt` to the current working directory. The training script has a number of command-line flags that you can use to configure the model architecture, hyperparameters, and input / output settings:
 

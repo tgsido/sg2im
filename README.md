@@ -2,6 +2,10 @@
 
 This is the code for the paper
 
+**<a href="tgsido.com/assets/cs224w_final_paper.pdf">Scene Graph to Image Translation: Graph Convolutional Network Approaches</a>**
+
+Inspired by the following:
+
 **<a href="https://arxiv.org/abs/1804.01622">Image Generation from Scene Graphs</a>**
 <br>
 <a href="http://cs.stanford.edu/people/jcjohns/">Justin Johnson</a>,
