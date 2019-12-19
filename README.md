@@ -2,7 +2,7 @@
 
 This is the code for the paper
 
-**<a href="tgsido.com/assets/cs224w_final_paper.pdf">Scene Graph to Image Translation: Graph Convolutional Network Approaches</a>**
+**<a href="http://tgsido.com/assets/cs224w_final_paper.pdf">Scene Graph to Image Translation: Graph Convolutional Network Approaches</a>**
 
 Inspired by the following:
 
