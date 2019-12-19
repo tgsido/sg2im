@@ -20,11 +20,39 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import sg2im.box_utils as box_utils
-from sg2im.graph import GraphTripleConv, GraphTripleConvNet
+from sg2im.graph import (GraphTripleConv, GraphTripleConvNet, GraphTripleRandomWalkConv,
+                        GraphTripleRnnConv, GraphSageMaxPoolConv, GraphSageLSTMConv,
+                        GraphSageMeanConv, GraphAttnConv)
 from sg2im.crn import RefinementNetwork
 from sg2im.layout import boxes_to_layout, masks_to_layout
 from sg2im.layers import build_mlp
+from sg2im.data.coco import CocoSceneGraphDataset, coco_collate_fn
+import os
+import json
 
+VG_DIR = os.path.expanduser('datasets/vg')
+COCO_DIR = os.path.expanduser('datasets/coco')
+
+def build_coco_dsets():
+    dset_kwargs = {
+        'image_dir': os.path.join(COCO_DIR, 'images/train2017'),
+        'instances_json': os.path.join(COCO_DIR, 'annotations/instances_train2017.json'),
+        'stuff_json': os.path.join(COCO_DIR, 'annotations/stuff_train2017.json'),
+        'stuff_only': True,
+        'image_size': '64,64',
+        'mask_size': 16,
+        'max_samples': None,
+        'min_object_size': 0.02,
+        'min_objects_per_image': 3,
+        'instance_whitelist': None,
+        'stuff_whitelist': None,
+        'include_other': False,
+        'include_relationships': True,
+    }
+    train_dset = CocoSceneGraphDataset(**dset_kwargs)
+    vocab = json.loads(json.dumps(train_dset.vocab))
+
+    return vocab
 
 class Sg2ImModel(nn.Module):
   def __init__(self, vocab, image_size=(64, 64), embedding_dim=64,
@@ -32,15 +60,19 @@ class Sg2ImModel(nn.Module):
                gconv_pooling='avg', gconv_num_layers=5,
                refinement_dims=(1024, 512, 256, 128, 64),
                normalization='batch', activation='leakyrelu-0.2',
-               mask_size=None, mlp_normalization='none', layout_noise_dim=0,
+               mask_size=None, mlp_normalization='none', layout_noise_dim=0, model_type=None,
                **kwargs):
     super(Sg2ImModel, self).__init__()
 
-    # We used to have some additional arguments: 
+    # We used to have some additional arguments:
     # vec_noise_dim, gconv_mode, box_anchor, decouple_obj_predictions
     if len(kwargs) > 0:
       print('WARNING: Model got unexpected kwargs ', kwargs)
-
+    """
+    #vocab = build_coco_dsets()
+    collate_fn = coco_collate_fn
+    print("vocab",vocab.keys())
+    """
     self.vocab = vocab
     self.image_size = image_size
     self.layout_noise_dim = layout_noise_dim
@@ -59,8 +91,26 @@ class Sg2ImModel(nn.Module):
         'hidden_dim': gconv_hidden_dim,
         'pooling': gconv_pooling,
         'mlp_normalization': mlp_normalization,
+        'model_type': model_type,
       }
-      self.gconv = GraphTripleConv(**gconv_kwargs)
+      model_constructor = None
+      if model_type == 'baseline':
+          model_constructor = GraphTripleConv
+      elif model_type == 'random-walk-baseline':
+          model_constructor = GraphTripleRandomWalkConv
+      elif model_type == 'rnn-baseline':
+          model_constructor = GraphTripleRnnConv
+      elif model_type == 'graphsage-maxpool':
+          model_constructor = GraphSageMaxPoolConv
+      elif model_type == 'graphsage-lstm':
+          model_constructor = GraphSageLSTMConv
+      elif model_type == 'graphsage-mean':
+          model_constructor = GraphSageMeanConv
+      elif model_type == 'gat-baseline':
+          model_constructor = GraphAttnConv
+      print("gconv_kwargs", gconv_kwargs)
+      print("model_type", model_type)
+      self.gconv = model_constructor(**gconv_kwargs)
 
     self.gconv_net = None
     if gconv_num_layers > 1:
@@ -70,6 +120,7 @@ class Sg2ImModel(nn.Module):
         'pooling': gconv_pooling,
         'num_layers': gconv_num_layers - 1,
         'mlp_normalization': mlp_normalization,
+        'model_type': model_type,
       }
       self.gconv_net = GraphTripleConvNet(**gconv_kwargs)
 
@@ -124,7 +175,7 @@ class Sg2ImModel(nn.Module):
     s, p, o = triples.chunk(3, dim=1)           # All have shape (T, 1)
     s, p, o = [x.squeeze(1) for x in [s, p, o]] # Now have shape (T,)
     edges = torch.stack([s, o], dim=1)          # Shape is (T, 2)
-  
+
     if obj_to_img is None:
       obj_to_img = torch.zeros(O, dtype=objs.dtype, device=objs.device)
 
@@ -153,7 +204,7 @@ class Sg2ImModel(nn.Module):
 
     H, W = self.image_size
     layout_boxes = boxes_pred if boxes_gt is None else boxes_gt
- 
+
     if masks_pred is None:
       layout = boxes_to_layout(obj_vecs, layout_boxes, obj_to_img, H, W)
     else:
@@ -230,4 +281,3 @@ class Sg2ImModel(nn.Module):
     """ Convenience method that combines encode_scene_graphs and forward. """
     objs, triples, obj_to_img = self.encode_scene_graphs(scene_graphs)
     return self.forward(objs, triples, obj_to_img)
-
